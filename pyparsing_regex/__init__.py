@@ -1,0 +1,486 @@
+import regex
+import sys
+from itertools import izip
+import itertools as it
+from copy import copy, deepcopy
+import abc
+from collections import namedtuple
+from overrides import overrides
+from functools import partial
+from numpy import inf
+from wrapt import ObjectProxy
+
+from myobjects import Count, Leaf, Structure, recursive_structure_delift
+import helpers_regex as hre
+
+_MAX_INT = sys.maxint
+
+# parser specific definitions
+# ===========================
+
+class ParserElementType(Structure):
+    """ abstract class capturing the interface of an arbitrary ParserElement of pyparsing """
+    __metaclass__ = abc.ABCMeta
+        
+    def __call__(self, name, **kwargs):
+        # TODO deepcopy needed?
+        return deepcopy(self).setResultsName(name, **kwargs)
+    
+    def setResultsName(self, name, **kwargs):
+        """ kwargs are for compatibility with pyparsing interface """
+        self.set_name(name)
+        return self # TODO is this the standard behaviour?
+        
+    @abc.abstractmethod
+    def suppress(self):
+        """Suppresses the output of this C{ParserElement}; useful to keep punctuation from
+           cluttering up returned output.
+           
+           change outer brackets, e.g. (...) or (?P<>...) or (?<>...) to non-capturing (?:...) version
+        """
+        raise NotImplemented
+        
+    @abc.abstractmethod
+    def repeat(self, min=0, max=None):
+        """ repititions is the main structural addition on top of the Structure-type """
+        raise NotImplemented()
+        
+    def parseString(self, instring, parseAll=False):
+        """Execute the parse expression with the given string.
+        This is the main interface to the client code, once the complete
+        expression has been built.
+
+        If you want the grammar to require that the entire input string be
+        successfully parsed, then set C{parseAll} to True (equivalent to ending
+        the grammar with C{L{StringEnd()}}).
+
+        Note: C{parseString} implicitly calls C{expandtabs()} on the input string,
+        in order to report proper column numbers in parse actions.
+        If the input string contains tabs and
+        the grammar uses parse actions that use the C{loc} argument to index into the
+        string being parsed, you can ensure you have a consistent view of the input
+        string by:
+        - calling C{parseWithTabs} on your grammar before calling C{parseString}
+          (see L{I{parseWithTabs}<parseWithTabs>})
+        - define your parse action using the full C{(s,loc,toks)} signature, and
+          reference the input string using the parse action's C{s} argument
+        - explictly expand the tabs in your input string before calling
+          C{parseString}
+
+        Return ParseResult!
+        """
+        return (self+StringEnd() if parseAll else self)._parseString(instring)
+        
+    @abc.abstractmethod
+    def _parseString(self, instring):
+        raise NotImplemented()
+
+    
+    def scanString(self, instring, maxMatches=_MAX_INT, overlap=False):
+        """not supported: maxMatches
+        
+        Scan the input string for expression matches.  Each match will return the
+        matching tokens, start location, and end location.  May be called with optional
+        C{maxMatches} argument, to clip scanning after 'n' matches are found.  If
+        C{overlap} is specified, then overlapping matches will be reported.
+
+        Note that the start and end locations are reported relative to the string
+        being parsed.  See L{I{parseString}<parseString>} for more information on parsing
+        strings with embedded tabs.
+        """
+        i = 0
+        matches = 0
+        while i < len(instring) and matches < maxMatches:
+            m = self.parseString(instring[i:])
+            if m is not None:
+                yield m
+                matches += 1
+                if overlap:
+                    i += 1
+                else:
+                    i += m.end()
+            else:
+                i += 1
+
+
+    def transformString(self, instring):
+        raise NotImplementedError("with regular expressions setParseAction is not supported and thus also not transformString")
+        #maybe later by using regex substitution
+
+    def searchString(self, instring, maxMatches=_MAX_INT):
+        """Another extension to C{L{scanString}}, simplifying the access to the tokens found
+           to match the given parse expression.  May be called with optional
+           C{maxMatches} argument, to clip searching after 'n' matches are found.
+        """
+        return list(self.scanString(instring))
+    
+    # add, iadd already defined in Structure
+            
+    def __or__(self, other):
+        base = deepcopy(self)
+        base |= other # (|=) == __iadd__
+        return base
+    
+    @abc.abstractmethod
+    def __ior__(self, other):
+        raise NotImplemented()
+
+        
+        
+class ParseResult(ObjectProxy):
+    """ pseudo class, capturing interface of return type of pyparsing (and more needed methods) """
+
+    def __init__(self, structure, span, flatten_singletons=None, empty_default="EMPTYLIST"):
+        # proxy the complete structure element:
+        super(ParseResult, self).__init__(structure)    
+        # general information over ParseResult:
+        self.span = span
+        
+    def end(self):
+        "returns match end for given string"
+        return self.span[1]
+    
+    def span(self):
+        "returns (match begin, match end) for given string"
+        return self.span
+
+    
+class ParserElement(ParserElementType):
+    """   
+    we can immitate arbitrarily complex formula directly by a single regex-string
+    the output gets restructured (in linear time) to fulfil ParserElement/Structure interface
+    
+    not implemented: whitespaces support
+    """
+    
+    #: repeated substructure (just a tuple)
+    Repeated = namedtuple("Repeated", ["count", "struct"])
+    MatchedGroup = namedtuple("Group", ["ends", "captures"])
+    
+    # CONSTRUCTION
+    # ============
+
+    def __init__(self, pattern=""):
+        super(ParserElement, self).__init__(initializer=Count())
+        self.pattern = pattern
+        self._compiled = None
+    
+    # LOGIC
+    # =====
+    
+    @overrides # TODO does this work - new parameter silent
+    def group(self, wrapper=lambda x:x, pseudo=False, liftkeys=False, silent=None):
+        # this is inplace:
+        super(ParserElement, self).group(wrapper, pseudo=pseudo, liftkeys=liftkeys)
+        # normal grouping is done by Structure type,
+        # but silent groups are nevertheless needed for correct regex semantics:
+        if silent is None:
+            pass # keep old self.pattern
+        elif silent:
+            self.pattern = hre.silent_group(self.pattern)
+        else:
+            self.pattern = hre.group(self.pattern)
+        self._compiled = None
+        return self
+    
+    def suppress(self):
+        """Suppresses the output of this C{ParserElement}; useful to keep punctuation from
+           cluttering up returned output.
+           
+           change all inner brackets, e.g. (...) or (?P<>...) or (?<>...) to non-capturing (?:...) version
+           
+           CAUTION: NOT REVERSIBLE!
+        """
+        self.pattern = hre.begins_not_silently_grouped.sub("(?:", self.pattern)
+        self._compiled = None
+    
+    def repeat(self, min=0, max=inf):
+        """ repeat on arbitrary ParserElement """
+        if min > max:
+            raise RuntimeError("min <= max needed")
+        # if not singleton, then add extra layer for repition:
+        if not hre.singleton_group.match(self.pattern):
+            # the grouping is done by wrapping into a Leaf,
+            # so that we can construct a map function which does all restructuring of the regex output
+            self.group(
+                wrapper = lambda struct: Leaf(self.Repeated(Count(), struct)),
+                pseudo = True,
+                liftkeys = True,
+                silent = False, # this adds a grouping level also in the pattern
+            )
+        if max is inf:
+            self.pattern = r"%s{%s,}"   % (self.pattern, min)
+        elif min == max:
+            self.pattern = r"%s{%s}"    % (self.pattern, min)
+        else:
+            self.pattern = r"%s{%s,%s}" % (self.pattern, min, max)
+        self._compiled = None
+    
+    @staticmethod
+    def _transform_match_gen(match):
+        try:
+            for i in it.count(1):
+                yield ParserElement.MatchedGroup(match.ends(i), match.captures(i))
+        except IndexError:
+            pass
+    
+    def _parseString(self, instring):
+        """starts matchin at starts of ``instring`` - no search
+        
+        this is copying everything beforehand"""
+        
+        if self._compiled is None:
+            self._compiled = regex.compile(self.pattern)
+        
+        m = self._compiled.match(instring)
+        if m is None:
+            return None
+        
+        mymatch = list(self._transform_match_gen(m))
+        
+        Count.reset()
+        cp = deepcopy(self)
+        cp.map(self._recursive_evalcount)
+        cp.map(self._func_parse_leaf(mymatch))
+        # getting default structure str, repr interface (also for nested elements):
+        # (for speed advantage, this line can be commented
+        #  str / repr of ParserElement are adapted to Structure for this reason)
+        recursive_structure_delift(cp)
+        pr = ParseResult(cp, span=m.span())
+        return pr
+    
+    @staticmethod
+    def _recursive_evalcount(leaf):
+        """ evaluates all Count instances so that they refer to fixed group """
+        # TODO it would be faster, if the value is afterwards directly available
+        if isinstance(leaf, ParserElement.Repeated):
+            leaf.count.eval()
+            leaf.struct.map(ParserElement._recursive_evalcount)
+        elif isinstance(leaf, Count):
+            leaf.eval()
+        return leaf
+    
+    @staticmethod
+    def _func_parse_leaf(match):
+        """
+        CAUTION: for this map to work correctly,
+        every Count instance must be evaluated already recursively!
+        
+        i.e. first map ParserElement._recursive_evalcount
+        """
+        
+        def recursive_parse(leaf, maxend=inf):
+            # recursive case:
+            if isinstance(leaf, ParserElement.Repeated):
+                def gen():
+                    for i, end in enumerate(match[leaf.count.value].ends):
+                        if end > maxend:
+                            del match[leaf.count.value].ends[:i] #delete everything parsed so far
+                            # captures are of no interest at all of these Repeated elements
+                            # so no need to delete them
+                            break
+                        yield deepcopy(leaf.struct).map(partial(recursive_parse, maxend=end))
+            
+                # returns structure which is labeld pseudo by initial repeat method
+                # return reduce(op.add, gen())
+                
+                # return simple list
+                return list(gen())
+            
+            # base case:
+            elif isinstance(leaf, Count):
+                i = -1
+                for i, end in enumerate(match[leaf.value].ends):
+                    if end > maxend:
+                        # i is now the final valid index+1
+                        break
+                else:
+                    # no break, i.e. we currently miss the last one, OR empty loop
+                    i += 1 # if nothing was done, i=0 now, giving empty list and no deletes
+                
+                ret = match[leaf.value].captures[:i]
+                # delete everything parsed so far (both captures end ends!):
+                del match[leaf.value].captures[:i]
+                del match[leaf.value].ends[:i]
+                return ret
+            
+        return recursive_parse
+    
+    def __iadd__(self, other):
+        if isinstance(other, basestring):
+            other = Token(other)
+        
+        Structure.__iadd__(self, other)
+        self.pattern += other.pattern
+        self._compiled = None
+        return self
+    
+    def __radd__(self, other):
+        if isinstance(other, basestring):
+            other = Token(other)
+        other += self
+        return other
+        
+    def __ior__(self, other):
+        if isinstance(other, basestring):
+            other = Token(other)
+        
+        Structure.__iadd__(self, other)
+        self.pattern += "|" + other.pattern
+        self._compiled = None
+        return self
+    
+    def __ror__(self, other):
+        if isinstance(other, basestring):
+            other = Token(other)
+        other |= self
+        return other
+    
+    """ # for speed just let it be the default output
+    def __str__(self):
+        return "(r'%s', %s)" % (self.pattern, Structure.__str__(self))
+    
+    def __repr__(self):
+        return "(r'%s', %s)" % (self.pattern, Structure.__repr__(self))
+    """
+
+
+def Token(pattern):
+    return ParserElement(pattern)
+
+
+
+# Pyparsing-like Interface
+# ========================
+
+
+def Regex(pattern, flags=0):
+    """Grouped by default. flags are locally scoped and will only effect the supplied pattern, nothing more"""
+    if flags:
+        str_flags = decodeflags(flags)
+        pattern = r"(?%s:%s)"%(str_flags, pattern)
+    return Token(hre.group(pattern))
+
+
+def Word(initChars, bodyChars=None, min=1, max=0, exact=0, excludeChars=None):
+    """Grouped by default. not implemented kwargs: asKeyword """
+    
+    if max != 0 and min > max:
+        raise RuntimeError("min <= max needed")
+
+    if excludeChars:
+        initChars = initChars + "--" + excludeChars
+        if bodyChars:
+            bodyChars = bodyChars + "--" + excludeChars
+
+    if exact == 1 or max == 1:
+        pattern = r"[%s]{1}"%(initChars)    
+    elif exact > 1:
+        if bodyChars:
+            pattern = r"[%s]{1}[%s]{%s}"%(initChars, bodyChars, exact-1)
+        else:
+            pattern = r"[%s]{%s}"%(initChars, exact)
+    elif max > 1:
+        if bodyChars:
+            pattern = r"[%s]{1}[%s]{%s,%s}"%(initChars, bodyChars, __builtin__.max(min-1,0), max-1)
+        else:
+            pattern = r"[%s]{%s,%s}"%(initChars, min, max)
+    else: # arbitrary upper bound
+        if bodyChars:
+            pattern = r"[%s]{1}[%s]{%s,}"%(initChars, bodyChars, __builtin__.max(min-1,0))
+        else:
+            pattern = r"[%s]{%s,}"%(initChars, min)
+
+    # group by default:
+    return Token(hre.group(pattern))
+
+        
+def SkipTo(self, expr, include=False):
+    """Grouped by default. not supported: ignore=None, failOn=None.
+    
+    Token for skipping over all undefined text until the matched expression is found.
+    If C{include} is set to true, the matched expression is also parsed (the skipped text
+    and matched expression are returned as a 2-element list).  The C{ignore}
+    argument is used to define grammars (typically quoted strings and comments) that
+    might contain false matches.
+    """
+    pattern = r"(?:.(?!%s))*."%(expr)
+    if include:
+        pattern += expr
+    # group by default:
+    return Token(hre.group(self.pattern))
+
+
+def StringStart():
+    """matches beginning of the text"""
+    return Token(r"^")
+
+def StringEnd():
+    """matches the end of the text"""
+    return Token(r"$")
+
+def LineStart():
+    """matches beginning of a line (lines delimited by \n characters)"""
+    return Regex(r"^", regex.MULTILINE)
+
+def LineEnd():
+    """matches the end of a line"""
+    return Regex(r"$", regex.MULTILINE)
+
+
+def Suppress(expr):
+    expr = deepcopy(expr)
+    expr.suppress()
+    return expr
+
+
+def And(iterable):
+    """__dict__ of first element will be passed through And result """
+    try:
+        gen = iter(iterable)
+        base = next(gen) + next(gen) # once (+) to have a new element
+        for expr in gen:
+            base += expr
+        return base
+    except StopIteration: # only one element
+        return next(iter(iterable))
+
+
+def MatchFirst(iterable):
+    """__dict__ of first element will be passed through MatchFirst result """
+    try:
+        gen = iter(iterable)
+        base = next(gen) | next(gen) # once (|) to have a new element
+        for expr in gen:
+            base |= expr
+        return base
+    except StopIteration: # only one element
+        return next(iter(iterable))
+    
+#Or __xor__ and Each __and__ are missing - takes more time to implement
+
+def Optional(expr):
+    cp = copy(expr)
+    cp.pattern = r"%s?" % hre.ensure_grouping(cp.pattern)
+    return cp
+
+def Group(expr):
+    g = deepcopy(expr)
+    g.group()
+    return g
+
+def GroupLiftKeys(expr):
+    g = deepcopy(expr)
+    g.group(liftkeys=True)
+    return g
+
+def OneOrMore(expr):
+    return Repeat(expr, min=1)
+        
+def ZeroOrMore(expr):
+    return Repeat(expr)
+
+def Repeat(expr, min=0, max=inf):
+    expr = deepcopy(expr)
+    expr.repeat(min=min, max=max)
+    return expr
