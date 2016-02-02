@@ -1,4 +1,5 @@
 import regex
+from itertools import izip
 
 begins_suppressed = regex.compile(r"\(\?:") #TODO rename to begins_silently_grouped ?
 begins_named = regex.compile(r"\(\?P<([^>]*)>")
@@ -17,14 +18,14 @@ def silent_group(pattern):
     return "(?:%s)" % pattern
 
 def ensure_grouping(pattern, begins=begins_grouped, newgroup=silent_group):
-    ''' check whether starting ( corresponds to )
-    if not add additional silent parentheses '''
-    
+    """ check whether starting ( corresponds to )
+    if not add additional silent parentheses """
+
     if begins.match(pattern) and ends_grouped.match(pattern):
         # correspond last ) and initial ( ? then it is already grouped
         if list(closing_parentheses_match(pattern))[-1] == 0:
             return pattern
-        
+
     return newgroup(pattern)
 
 def closing_parentheses_match(data):

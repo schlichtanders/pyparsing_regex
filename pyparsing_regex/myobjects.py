@@ -80,10 +80,10 @@ class Structure(Sequence):
     
     def __init__(self, initializer=None, _list=None, _dict=None):
         """either initializer or non-empty list is needed"""
-        if not _list and not initializer:
+        if _list is None and initializer is None:
             raise RuntimeError("either _list or initializer is needed")
-        self._list = _list or [Leaf(initializer)] # list of sub-Structures
-        self._dict = _dict or defaultdict(list)
+        self._list = _list if _list is not None else [Leaf(initializer)] # list of sub-Structures
+        self._dict = _dict if _dict is not None else defaultdict(list)
         self.pseudo = False # for better recursive iteration, this indicates that the top-level should be flattened by default
         self.liftedkeys = False
 
@@ -176,8 +176,9 @@ class Structure(Sequence):
                 if elem == 'lifted':
                     # this key "lifted" ensures that sublevel is still build from structures
                     # at least I hope so =), so no direct values, but Structure
+                    # Nope it does not, because of pseudo structures
                     for s in self.iter_nopseudo():
-                        if s.liftedkeys:
+                        if hasattr(s, "liftedkeys") and s.liftedkeys:
                             # yield from in python 3.x:
                             for i in s._dictitem_gen(index):
                                 yield i

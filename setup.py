@@ -49,6 +49,7 @@ setup(
     install_requires=["overrides>=0.5",
                       "wrapt>=1.10.6",
                       "numpy>=1.10.2",
-                      "regex>=2016.01.10"],
+                      "regex>=2016.01.10",
+                      "pyparsing>=2.0.3"],
     cmdclass={'clean': CleanCmd}
     )

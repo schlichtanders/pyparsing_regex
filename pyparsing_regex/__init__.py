@@ -1,6 +1,6 @@
+import __builtin__
 import regex
 import sys
-from itertools import izip
 import itertools as it
 from copy import copy, deepcopy
 import abc
@@ -12,6 +12,11 @@ from wrapt import ObjectProxy
 
 from myobjects import Count, Leaf, Structure, recursive_structure_delift
 import helpers_regex as hre
+from pprint import pformat
+
+
+# emulate generic methods from pyparsing itself:
+from pyparsing import srange
 
 _MAX_INT = sys.maxint
 
@@ -30,7 +35,14 @@ class ParserElementType(Structure):
         """ kwargs are for compatibility with pyparsing interface """
         self.set_name(name)
         return self # TODO is this the standard behaviour?
-        
+
+    def setName(self, name):
+        """ this is not yet implemented, so no easier output yet
+        :param name:
+        :return:
+        """
+        return self
+
     @abc.abstractmethod
     def suppress(self):
         """Suppresses the output of this C{ParserElement}; useful to keep punctuation from
@@ -125,6 +137,10 @@ class ParserElementType(Structure):
     def __ior__(self, other):
         raise NotImplemented()
 
+    def pprint(self):
+        """not implemented in more detail"""
+        return pformat(repr(self))
+
         
         
 class ParseResult(ObjectProxy):
@@ -160,9 +176,15 @@ class ParserElement(ParserElementType):
     # CONSTRUCTION
     # ============
 
-    def __init__(self, pattern=""):
-        super(ParserElement, self).__init__(initializer=Count())
-        self.pattern = pattern
+    def __init__(self, pattern, silent=False):
+        if silent:
+            # create empty Structure:
+            super(ParserElement, self).__init__(_list=[])
+            self.pattern = pattern
+        else:
+            # create Count() Structure
+            super(ParserElement, self).__init__(initializer=Count())
+            self.pattern = hre.group(pattern)  # for every Count() there must be a group
         self._compiled = None
     
     # LOGIC
@@ -175,7 +197,7 @@ class ParserElement(ParserElementType):
         # normal grouping is done by Structure type,
         # but silent groups are nevertheless needed for correct regex semantics:
         if silent is None:
-            pass # keep old self.pattern
+            pass # keep old self.pattern, this is mainly needed for pseudo groups like created for ResultNames
         elif silent:
             self.pattern = hre.silent_group(self.pattern)
         else:
@@ -308,8 +330,7 @@ class ParserElement(ParserElementType):
     
     def __iadd__(self, other):
         if isinstance(other, basestring):
-            other = Token(other)
-        
+            other = ParserElement(regex.escape(other))
         Structure.__iadd__(self, other)
         self.pattern += other.pattern
         self._compiled = None
@@ -317,23 +338,28 @@ class ParserElement(ParserElementType):
     
     def __radd__(self, other):
         if isinstance(other, basestring):
-            other = Token(other)
+            other = ParserElement(regex.escape(other))
         other += self
         return other
         
     def __ior__(self, other):
         if isinstance(other, basestring):
-            other = Token(other)
+            other = ParserElement(regex.escape(other))
         
         Structure.__iadd__(self, other)
         self.pattern += "|" + other.pattern
-        self._compiled = None
+        self.group(pseudo = True,
+                   liftkeys = True,
+                   silent = True)
         return self
     
     def __ror__(self, other):
         if isinstance(other, basestring):
-            other = Token(other)
+            other = ParserElement(regex.escape(other))
         other |= self
+        other.group(pseudo = True,
+                    liftkeys = True,
+                    silent = True)
         return other
     
     """ # for speed just let it be the default output
@@ -345,105 +371,137 @@ class ParserElement(ParserElementType):
     """
 
 
-def Token(pattern):
-    return ParserElement(pattern)
-
 
 
 # Pyparsing-like Interface
 # ========================
 
+class Literal(ParserElement):
+    def __init__(self, str):
+        super(Literal, self).__init__(regex.escape(str))
 
-def Regex(pattern, flags=0):
-    """Grouped by default. flags are locally scoped and will only effect the supplied pattern, nothing more"""
-    if flags:
-        str_flags = decodeflags(flags)
-        pattern = r"(?%s:%s)"%(str_flags, pattern)
-    return Token(hre.group(pattern))
+class Regex(ParserElement):
+    def __init__(self, pattern, flags=0):
+        """flags are locally scoped and will only effect the supplied pattern, nothing more"""
+        if flags:
+            str_flags = hre.decodeflags(flags)
+            pattern = r"(?%s:%s)"%(str_flags, pattern)
+        super(Regex, self).__init__(pattern)
 
 
-def Word(initChars, bodyChars=None, min=1, max=0, exact=0, excludeChars=None):
-    """Grouped by default. not implemented kwargs: asKeyword """
+class Word(ParserElement):
+    def __init__(self, initChars, bodyChars=None, min=1, max=0, exact=0, excludeChars=None):
+        """not implemented kwargs: asKeyword """
+        if max != 0 and min > max:
+            raise RuntimeError("min <= max needed")
+
+        if excludeChars:
+            initChars = initChars + "--" + excludeChars
+            if bodyChars:
+                bodyChars = bodyChars + "--" + excludeChars
+
+        if exact == 1 or max == 1:
+            pattern = r"[%s]{1}"%(initChars)
+        elif exact > 1:
+            if bodyChars:
+                pattern = r"[%s]{1}[%s]{%s}"%(initChars, bodyChars, exact-1)
+            else:
+                pattern = r"[%s]{%s}"%(initChars, exact)
+        elif max > 1:
+            if bodyChars:
+                pattern = r"[%s]{1}[%s]{%s,%s}"%(initChars, bodyChars, __builtin__.max(min-1,0), max-1)
+            else:
+                pattern = r"[%s]{%s,%s}"%(initChars, min, max)
+        else: # arbitrary upper bound
+            if bodyChars:
+                pattern = r"[%s]{1}[%s]{%s,}"%(initChars, bodyChars, __builtin__.max(min-1,0))
+            else:
+                pattern = r"[%s]{%s,}"%(initChars, min)
+        super(Word, self).__init__(pattern)
     
-    if max != 0 and min > max:
-        raise RuntimeError("min <= max needed")
+class CharsNotIn(Word):
+    def __init__(self, notChars, min=1, max=0, exact=0):
+        super(CharsNotIn, self).__init__("^%s" % notChars, min=min, max=max, exact=exact)
 
-    if excludeChars:
-        initChars = initChars + "--" + excludeChars
-        if bodyChars:
-            bodyChars = bodyChars + "--" + excludeChars
 
-    if exact == 1 or max == 1:
-        pattern = r"[%s]{1}"%(initChars)    
-    elif exact > 1:
-        if bodyChars:
-            pattern = r"[%s]{1}[%s]{%s}"%(initChars, bodyChars, exact-1)
-        else:
-            pattern = r"[%s]{%s}"%(initChars, exact)
-    elif max > 1:
-        if bodyChars:
-            pattern = r"[%s]{1}[%s]{%s,%s}"%(initChars, bodyChars, __builtin__.max(min-1,0), max-1)
-        else:
-            pattern = r"[%s]{%s,%s}"%(initChars, min, max)
-    else: # arbitrary upper bound
-        if bodyChars:
-            pattern = r"[%s]{1}[%s]{%s,}"%(initChars, bodyChars, __builtin__.max(min-1,0))
-        else:
-            pattern = r"[%s]{%s,}"%(initChars, min)
-
-    # group by default:
-    return Token(hre.group(pattern))
-
+def _silent_pattern(expr):
+    if isinstance(expr, basestring):
+        return regex.escape(expr)
+    else:
+        return hre.begins_not_silently_grouped.sub("(?:", expr.pattern)
         
-def SkipTo(self, expr, include=False):
-    """Grouped by default. not supported: ignore=None, failOn=None.
-    
-    Token for skipping over all undefined text until the matched expression is found.
-    If C{include} is set to true, the matched expression is also parsed (the skipped text
-    and matched expression are returned as a 2-element list).  The C{ignore}
-    argument is used to define grammars (typically quoted strings and comments) that
-    might contain false matches.
-    """
-    pattern = r"(?:.(?!%s))*."%(expr)
-    if include:
-        pattern += expr
-    # group by default:
-    return Token(hre.group(self.pattern))
+class SkipTo(ParserElement):
+    def __init__(self, expr, include=False):
+        """Grouped by default. not supported: ignore=None, failOn=None.
+
+        Token for skipping over all undefined text until the matched expression is found.
+        If C{include} is set to true, the matched expression is also parsed (the skipped text
+        and matched expression are returned as a 2-element list).  The C{ignore}
+        argument is used to define grammars (typically quoted strings and comments) that
+        might contain false matches.
+        """
+        pattern = r"(?:.(?!%s))*." % _silent_pattern(expr)
+        if include:
+            pattern += _silent_pattern(expr)
+        super(SkipTo, self).__init__(pattern)
 
 
-def StringStart():
-    """matches beginning of the text"""
-    return Token(r"^")
+class FollowedBy(ParserElement):
+    def __init__(self, expr):
+        """Lookahead matching of the given parse expression.  C{FollowedBy}
+        does *not* advance the parsing position within the input string, it only
+        verifies that the specified parse expression matches at the current
+        position.  C{FollowedBy} always returns a null token list."""
+        pattern = r"(?=%s)" % _silent_pattern(expr) # standard lookahead
+        super(FollowedBy, self).__init__(pattern, silent=True)
 
-def StringEnd():
-    """matches the end of the text"""
-    return Token(r"$")
-
-def LineStart():
-    """matches beginning of a line (lines delimited by \n characters)"""
-    return Regex(r"^", regex.MULTILINE)
-
-def LineEnd():
-    """matches the end of a line"""
-    return Regex(r"$", regex.MULTILINE)
+class Combine(ParserElement):
+    def __init__(self, expr):
+        """Converter to concatenate all matching tokens to a single string.
+        By default, the matching patterns must also be contiguous in the input string;
+        this can be disabled by specifying C{'adjacent=False'} in the constructor."""
+        super(Combine, self).__init__(_silent_pattern(expr))
 
 
-def Suppress(expr):
-    expr = deepcopy(expr)
-    expr.suppress()
-    return expr
+class Suppress(ParserElement):
+    def __init__(self, expr):
+        super(Suppress, self).__init__(_silent_pattern(expr), silent=True)
 
+
+class StringStart(ParserElement):
+    def __init__(self):
+        """matches beginning of the text"""
+        super(StringStart, self).__init__(r"^")
+
+class StringEnd(ParserElement):
+    def __init__(self):
+        """matches the end of the text"""
+        super(StringEnd, self).__init__(r"$")
+
+class LineStart(Regex):
+    def __init__(self):
+        """matches beginning of a line (lines delimited by \n characters)"""
+        super(LineStart, self).__init__(r"^", regex.MULTILINE)
+
+class LineEnd(Regex):
+    def __init__(self):
+        """matches the end of a line"""
+        super(LineEnd, self).__init__(r"$", regex.MULTILINE)
+
+
+# For the rest, functions are much easier than classes, so we keep it with them
 
 def And(iterable):
     """__dict__ of first element will be passed through And result """
     try:
         gen = iter(iterable)
-        base = next(gen) + next(gen) # once (+) to have a new element
+        first = next(gen)
+        base = first + next(gen) # once (+) to have a new element
         for expr in gen:
             base += expr
         return base
     except StopIteration: # only one element
-        return next(iter(iterable))
+        return first
 
 
 def MatchFirst(iterable):
@@ -459,19 +517,21 @@ def MatchFirst(iterable):
     
 #Or __xor__ and Each __and__ are missing - takes more time to implement
 
-def Optional(expr):
+def Optional(expr, default=None):
+    if default is not None:
+        Leaf.EMPTY_DEFAULT = default
     cp = copy(expr)
     cp.pattern = r"%s?" % hre.ensure_grouping(cp.pattern)
     return cp
 
 def Group(expr):
     g = deepcopy(expr)
-    g.group()
+    g.group(silent=True)
     return g
 
 def GroupLiftKeys(expr):
     g = deepcopy(expr)
-    g.group(liftkeys=True)
+    g.group(silent=True, liftkeys=True)
     return g
 
 def OneOrMore(expr):
@@ -483,4 +543,22 @@ def ZeroOrMore(expr):
 def Repeat(expr, min=0, max=inf):
     expr = deepcopy(expr)
     expr.repeat(min=min, max=max)
+    return expr
+
+
+
+
+
+
+# my own extras:
+# ==============
+
+def setResultsNameInPlace(expr, name, listAllMatches=False):
+    """ adds resultsname in place, no copy as with method
+
+    :param expr: parser to set resultsname
+    :param name: resultsname
+    :param listAllMatches: whether strings matches should all be listed, or only last match should be kept
+    """
+    expr.setResultsName(name)
     return expr
