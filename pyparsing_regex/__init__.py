@@ -217,6 +217,15 @@ class ParserElement(ParserElementType):
         return self
     
     def repeat(self, min=0, max=None):
+        # TODO there is something wrong here. After studying the suppress case,
+        # TODO it seems as if repeat silent=False is just wrong. There are silent repeats
+        # TODO or if there are always unsilent repeats, how to make a suppressed-like repeat?
+
+        # TODO it seems to me that suppressed groups must be labeled to see from above whether a group is suppressed
+        # TODO and then take the correct variant (silent=False/True, and Leaf/noLeaf) of repeat
+
+        # TODO or an alternativ thought: maybe make all repeats silent and instead track all real groups
+        # TODO through the same map (keys should be managed by references between these groups)
         """ repeat on arbitrary ParserElement """
         if max is not None and min > max:
             raise RuntimeError("min <= max needed")
