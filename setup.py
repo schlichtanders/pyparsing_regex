@@ -10,6 +10,7 @@ from distutils.command.clean import clean as Clean
 # TODO profile with new profiler
 # TODO compare performance with Fabians old version
 
+
 class CleanCmd(Clean):
 
     description = "Cleans ..."
@@ -23,11 +24,11 @@ class CleanCmd(Clean):
 
         for dirpath, dirnames, filenames in os.walk('.'):
             for filename in filenames:
-                if (filename.endswith('.so') or \
-                    filename.endswith('.pyd') or \
-                    filename.endswith('.pyc') or \
-                    filename.endswith('_wrap.c') or \
-                    filename.startswith('wrapper_') or \
+                if (filename.endswith('.so') or
+                    filename.endswith('.pyd') or
+                    filename.endswith('.pyc') or
+                    filename.endswith('_wrap.c') or
+                    filename.startswith('wrapper_') or
                     filename.endswith('~')):
                         os.unlink(os.path.join(dirpath, filename))
 
@@ -48,8 +49,8 @@ setup(
     zip_safe=False,
     install_requires=["overrides>=0.5",
                       "wrapt>=1.10.6",
-                      "numpy>=1.10.2",
                       "regex>=2016.01.10",
                       "pyparsing>=2.0.3"],
+    # TODO add package schlichtanders
     cmdclass={'clean': CleanCmd}
     )

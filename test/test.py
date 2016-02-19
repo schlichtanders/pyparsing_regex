@@ -4,7 +4,7 @@ from __future__ import division
 __author__ = 'Stephan Sahm <Stephan.Sahm@gmx.de>'
 
 from pyparsing_regex import *
-from pyparsing_regex.mywrappers import str_list
+from schlichtanders.mywrappers import str_list
 
 w = Word("abc", exact=2)
 ww = w("a") + w("b")
@@ -14,4 +14,3 @@ data = "abcbbccc"
 
 print r.parseString(data)
 print str_list(ww.searchString(data))
-

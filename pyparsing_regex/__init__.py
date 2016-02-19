@@ -7,13 +7,11 @@ import abc
 from collections import namedtuple
 from overrides import overrides
 from functools import partial
-from numpy import inf
 from wrapt import ObjectProxy
 
-from myobjects import Count, Leaf, Structure, recursive_structure_delift
+from schlichtanders.myobjects import Count, Leaf, Structure, recursive_structure_delift
 import helpers_regex as hre
 from pprint import pformat
-
 
 # emulate generic methods from pyparsing itself:
 from pyparsing import srange
@@ -50,7 +48,7 @@ class ParserElementType(Structure):
            
            change outer brackets, e.g. (...) or (?P<>...) or (?<>...) to non-capturing (?:...) version
         """
-        raise NotImplemented
+        return self
         
     @abc.abstractmethod
     def repeat(self, min=0, max=None):
@@ -215,10 +213,12 @@ class ParserElement(ParserElementType):
         """
         self.pattern = hre.begins_not_silently_grouped.sub("(?:", self.pattern)
         self._compiled = None
+        self.clear()
+        return self
     
-    def repeat(self, min=0, max=inf):
+    def repeat(self, min=0, max=None):
         """ repeat on arbitrary ParserElement """
-        if min > max:
+        if max is not None and min > max:
             raise RuntimeError("min <= max needed")
         # if not singleton, then add extra layer for repition:
         if not hre.singleton_group.match(self.pattern):
@@ -230,7 +230,7 @@ class ParserElement(ParserElementType):
                 liftkeys = True,
                 silent = False, # this adds a grouping level also in the pattern
             )
-        if max is inf:
+        if max is None:
             self.pattern = r"%s{%s,}"   % (self.pattern, min)
         elif min == max:
             self.pattern = r"%s{%s}"    % (self.pattern, min)
@@ -291,7 +291,7 @@ class ParserElement(ParserElementType):
         i.e. first map ParserElement._recursive_evalcount
         """
         
-        def recursive_parse(leaf, maxend=inf):
+        def recursive_parse(leaf, maxend=None):
             # recursive case:
             if isinstance(leaf, ParserElement.Repeated):
                 def gen():
@@ -311,19 +311,24 @@ class ParserElement(ParserElementType):
             
             # base case:
             elif isinstance(leaf, Count):
-                i = -1
-                for i, end in enumerate(match[leaf.value].ends):
-                    if end > maxend:
-                        # i is now the final valid index+1
-                        break
+                if maxend is None:
+                    ret = match[leaf.value].captures[:]
+                    del match[leaf.value].captures[:]
+                    del match[leaf.value].ends[:]
                 else:
-                    # no break, i.e. we currently miss the last one, OR empty loop
-                    i += 1 # if nothing was done, i=0 now, giving empty list and no deletes
-                
-                ret = match[leaf.value].captures[:i]
-                # delete everything parsed so far (both captures end ends!):
-                del match[leaf.value].captures[:i]
-                del match[leaf.value].ends[:i]
+                    i = -1
+                    for i, end in enumerate(match[leaf.value].ends):
+                        if end > maxend:
+                            # i is now the final valid index+1
+                            break
+                    else:
+                        # no break, i.e. we currently miss the last one, OR empty loop
+                        i += 1 # if nothing was done, i=0 now, giving empty list and no deletes
+
+                    ret = match[leaf.value].captures[:i]
+                    # delete everything parsed so far (both captures end ends!):
+                    del match[leaf.value].captures[:i]
+                    del match[leaf.value].ends[:i]
                 return ret
             
         return recursive_parse
@@ -540,11 +545,10 @@ def OneOrMore(expr):
 def ZeroOrMore(expr):
     return Repeat(expr)
 
-def Repeat(expr, min=0, max=inf):
+def Repeat(expr, min=0, max=None):
     expr = deepcopy(expr)
     expr.repeat(min=min, max=max)
     return expr
-
 
 
 
