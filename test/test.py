@@ -7,10 +7,20 @@ from pyparsing_regex import *
 from schlichtanders.mywrappers import str_list
 
 w = Word("abc", exact=2)
-ww = w("a") + w("b")
+#w = Regex("[abc]{2}")
+ww = Group(w("a") + w("b"))
+ww2 = GroupLiftKeys(ww + ww)("ww2")
 r = Repeat(ww, 2, 4)
+r2 = Repeat(ww2, 2, 4)
 
-data = "abcbbccc"
+data = "abcbbcccabccbcca"
 
-print r.parseString(data)
-print str_list(ww.searchString(data))
+r_result = r.parseString(data)
+print r_result
+r2_result = r2.parseString(data)
+print r2_result
+
+ww_result = ww.searchString(data)
+print str_list(ww_result)
+
+# everything works as expected

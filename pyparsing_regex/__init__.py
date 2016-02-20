@@ -226,11 +226,19 @@ class ParserElement(ParserElementType):
 
         # TODO or an alternativ thought: maybe make all repeats silent and instead track all real groups
         # TODO through the same map (keys should be managed by references between these groups)
+        # TODO in fact only such groups over an repeated element must be Leafed
         """ repeat on arbitrary ParserElement """
         if max is not None and min > max:
             raise RuntimeError("min <= max needed")
-        # if not singleton, then add extra layer for repition:
-        if not hre.singleton_group.match(self.pattern):
+        # if there is at most one real group in the pattern,
+        # then there is no structure so far at all
+        # and thus we do not have to group, but just can repeat
+        # (mind by .suppress() there may also be zero real groups, which also don't have to be grouped)
+        if len(hre.begins_not_silently_grouped.findall(self.pattern)) <= 1:
+            # we still need to group silently so to not break anything
+            # (otherwise e.g. UNH...'{1, 99} appears, which instead of repeating the "group", just will repeat the last element)
+            self.pattern = hre.ensure_grouping(self.pattern)
+        else:
             # the grouping is done by wrapping into a Leaf,
             # so that we can construct a map function which does all restructuring of the regex output
             self.group(
@@ -305,7 +313,7 @@ class ParserElement(ParserElementType):
             if isinstance(leaf, ParserElement.Repeated):
                 def gen():
                     for i, end in enumerate(match[leaf.count.value].ends):
-                        if end > maxend:
+                        if maxend is not None and end > maxend:
                             del match[leaf.count.value].ends[:i] #delete everything parsed so far
                             # captures are of no interest at all of these Repeated elements
                             # so no need to delete them
@@ -315,7 +323,9 @@ class ParserElement(ParserElementType):
                 # returns structure which is labeld pseudo by initial repeat method
                 # return reduce(op.add, gen())
                 
-                # return simple list
+                # alternatively return simple list, which is flattened out automatically
+                # (same effect as pseudo structure, however one could process this repetitions further,
+                # e.g. keeping only last repition like it is done in pyparsing for default)
                 return list(gen())
             
             # base case:
