@@ -2,16 +2,21 @@ import __builtin__
 import regex
 import sys
 import itertools as it
-from copy import copy, deepcopy
+from copy import copy
 import abc
 from collections import namedtuple
 from overrides import overrides
 from functools import partial
 from wrapt import ObjectProxy
 
-from schlichtanders.myobjects import Count, Leaf, Structure, recursive_structure_delift
+from schlichtanders.myobjects import Count, Leaf, Structure
 import helpers_regex as hre
 from pprint import pformat
+
+import cPickle
+
+def deepcopy(o):
+    return cPickle.loads(cPickle.dumps(o, -1))
 
 # emulate generic methods from pyparsing itself:
 from pyparsing import srange
@@ -158,7 +163,28 @@ class ParseResult(ObjectProxy):
         "returns (match begin, match end) for given string"
         return self.span
 
-    
+#: small helper classes for substructuring:
+class Repeated(object):
+    def __init__(self, count, struct):
+        self.count = count
+        self.struct = struct
+
+class MatchedGroup(object):
+    def __init__(self, ends, captures=None):
+        self.ends = ends
+        self.captures = captures
+
+
+def recursive_structure_delift(struct):
+    """ more complex delift for struct types, as the struct type itself is usually nested """
+    struct.__class__ = Structure
+    for s in struct.iter_nopseudo(): # flattens out Leafs
+        if isinstance(s, Structure):
+            recursive_structure_delift(s)
+        elif isinstance(s, Repeated):
+            recursive_structure_delift(s.struct)
+
+
 class ParserElement(ParserElementType):
     """   
     we can immitate arbitrarily complex formula directly by a single regex-string
@@ -167,10 +193,7 @@ class ParserElement(ParserElementType):
     not implemented: whitespaces support
     """
     
-    #: repeated substructure (just a tuple)
-    Repeated = namedtuple("Repeated", ["count", "struct"])
-    MatchedGroup = namedtuple("Group", ["ends", "captures"])
-    
+
     # CONSTRUCTION
     # ============
 
@@ -217,16 +240,6 @@ class ParserElement(ParserElementType):
         return self
     
     def repeat(self, min=0, max=None):
-        # TODO there is something wrong here. After studying the suppress case,
-        # TODO it seems as if repeat silent=False is just wrong. There are silent repeats
-        # TODO or if there are always unsilent repeats, how to make a suppressed-like repeat?
-
-        # TODO it seems to me that suppressed groups must be labeled to see from above whether a group is suppressed
-        # TODO and then take the correct variant (silent=False/True, and Leaf/noLeaf) of repeat
-
-        # TODO or an alternativ thought: maybe make all repeats silent and instead track all real groups
-        # TODO through the same map (keys should be managed by references between these groups)
-        # TODO in fact only such groups over an repeated element must be Leafed
         """ repeat on arbitrary ParserElement """
         if max is not None and min > max:
             raise RuntimeError("min <= max needed")
@@ -242,7 +255,7 @@ class ParserElement(ParserElementType):
             # the grouping is done by wrapping into a Leaf,
             # so that we can construct a map function which does all restructuring of the regex output
             self.group(
-                wrapper = lambda struct: Leaf(self.Repeated(Count(), struct)),
+                wrapper = lambda struct: Leaf(Repeated(Count(), struct)),
                 pseudo = True,
                 liftkeys = True,
                 silent = False, # this adds a grouping level also in the pattern
@@ -259,7 +272,7 @@ class ParserElement(ParserElementType):
     def _transform_match_gen(match):
         try:
             for i in it.count(1):
-                yield ParserElement.MatchedGroup(match.ends(i), match.captures(i))
+                yield MatchedGroup(match.ends(i), match.captures(i))
         except IndexError:
             pass
     
@@ -275,50 +288,79 @@ class ParserElement(ParserElementType):
         if m is None:
             return None
         
-        mymatch = list(self._transform_match_gen(m))
-        
+
         Count.reset()
         cp = deepcopy(self)
-        cp.map(self._recursive_evalcount)
-        cp.map(self._func_parse_leaf(mymatch))
         # getting default structure str, repr interface (also for nested elements):
         # (for speed advantage, this line can be commented
         #  str / repr of ParserElement are adapted to Structure for this reason)
-        recursive_structure_delift(cp)
+        #recursive_structure_delift(cp))
+
+        mymatch, substruct_dumped, preprocess_functor = self._parse_preprocess(m)
+        cp.map(preprocess_functor)
+
+        cp.map(self._func_parse_leaf(mymatch, substruct_dumped))
         pr = ParseResult(cp, span=m.span())
         return pr
-    
+
     @staticmethod
-    def _recursive_evalcount(leaf):
-        """ evaluates all Count instances so that they refer to fixed group """
-        # TODO it would be faster, if the value is afterwards directly available
-        if isinstance(leaf, ParserElement.Repeated):
-            leaf.count.eval()
-            leaf.struct.map(ParserElement._recursive_evalcount)
-        elif isinstance(leaf, Count):
-            leaf.eval()
-        return leaf
-    
+    def _parse_preprocess(match):
+        """ evals Counts, transforms match, and dumps structures for repititions
+
+        attention! returns function as second, and match_transformed as first argument,
+        however this match_transformed is still empty initially and will be set by running the
+        function
+
+        :param match: to be transformed
+        :return: match_transformed, evalcount_func
+        """
+        match_transformed = []
+        substructs_dumped = {} #{Count: dumps(substruct)}
+        def preprocess_functor(leaf):
+            """ evaluates all Count instances so that they refer to fixed group """
+            if isinstance(leaf, Repeated):
+                leaf.count = leaf.count.value # evaluates and stores value directly
+                # CAUTION: +1 as we now start counting at 0
+                match_transformed.append(MatchedGroup(match.ends(leaf.count + 1)))
+                # recursive call
+                leaf.struct.map(preprocess_functor)
+                # after this everything is executed depth first (by recursion)
+                substructs_dumped[leaf.count] = cPickle.dumps(leaf.struct)
+                del leaf.struct # delete the reference for dumping structure further up
+                # leaf is still a Repeated
+
+            # elif isinstance(leaf, Count):
+            else: #there should be no other case
+                leaf = leaf.value # evaluates and stores value directly
+                # CAUTION: +1 as we now start counting at 0
+                match_transformed.append(MatchedGroup(match.ends(leaf + 1), match.captures(leaf + 1)))
+                # leaf is int
+
+            return leaf
+
+        return match_transformed, substructs_dumped, preprocess_functor
+
     @staticmethod
-    def _func_parse_leaf(match):
+    def _func_parse_leaf(mymatch, substruct_dumped):
         """
         CAUTION: for this map to work correctly,
-        every Count instance must be evaluated already recursively!
-        
+        every Count instance must be evaluated and directly available (recursively!)
         i.e. first map ParserElement._recursive_evalcount
         """
         
         def recursive_parse(leaf, maxend=None):
             # recursive case:
-            if isinstance(leaf, ParserElement.Repeated):
+            if isinstance(leaf, Repeated):
                 def gen():
-                    for i, end in enumerate(match[leaf.count.value].ends):
+                    for i, end in enumerate(mymatch[leaf.count].ends):
                         if maxend is not None and end > maxend:
-                            del match[leaf.count.value].ends[:i] #delete everything parsed so far
+                            del mymatch[leaf.count].ends[:i] #delete everything parsed so far
                             # captures are of no interest at all of these Repeated elements
-                            # so no need to delete them
                             break
-                        yield deepcopy(leaf.struct).map(partial(recursive_parse, maxend=end))
+                        # yield deepcopy(leaf.struct).map(partial(recursive_parse, maxend=end))
+                        yield cPickle.loads(substruct_dumped[leaf.count]).map(
+                            partial(recursive_parse, maxend=end)
+                        )
             
                 # returns structure which is labeld pseudo by initial repeat method
                 # return reduce(op.add, gen())
@@ -329,14 +371,15 @@ class ParserElement(ParserElementType):
                 return list(gen())
             
             # base case:
-            elif isinstance(leaf, Count):
+            #elif isinstance(leaf, int): # value is stored directly
+            else:  # there should be no other case
                 if maxend is None:
-                    ret = match[leaf.value].captures[:]
-                    del match[leaf.value].captures[:]
-                    del match[leaf.value].ends[:]
+                    ret = mymatch[leaf].captures[:]
+                    del mymatch[leaf].captures[:]
+                    del mymatch[leaf].ends[:]
                 else:
                     i = -1
-                    for i, end in enumerate(match[leaf.value].ends):
+                    for i, end in enumerate(mymatch[leaf].ends):
                         if end > maxend:
                             # i is now the final valid index+1
                             break
@@ -344,10 +387,10 @@ class ParserElement(ParserElementType):
                         # no break, i.e. we currently miss the last one, OR empty loop
                         i += 1 # if nothing was done, i=0 now, giving empty list and no deletes
 
-                    ret = match[leaf.value].captures[:i]
+                    ret = mymatch[leaf].captures[:i]
                     # delete everything parsed so far (both captures end ends!):
-                    del match[leaf.value].captures[:i]
-                    del match[leaf.value].ends[:i]
+                    del mymatch[leaf].captures[:i]
+                    del mymatch[leaf].ends[:i]
                 return ret
             
         return recursive_parse
@@ -522,9 +565,9 @@ def And(iterable):
         first = next(gen)
         base = first + next(gen) # once (+) to have a new element
         for expr in gen:
-            base += expr
+            base += expr  # in place addition to avoid copying
         return base
-    except StopIteration: # only one element
+    except StopIteration:  # only one element
         return first
 
 
@@ -534,9 +577,9 @@ def MatchFirst(iterable):
         gen = iter(iterable)
         base = next(gen) | next(gen) # once (|) to have a new element
         for expr in gen:
-            base |= expr
+            base |= expr  # in place or to avoid copying
         return base
-    except StopIteration: # only one element
+    except StopIteration:  # only one element
         return next(iter(iterable))
     
 #Or __xor__ and Each __and__ are missing - takes more time to implement
