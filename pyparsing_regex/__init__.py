@@ -298,7 +298,6 @@ class ParserElement(ParserElementType):
 
         mymatch, substruct_dumped, preprocess_functor = self._parse_preprocess(m)
         cp.map(preprocess_functor)
-
         cp.map(self._func_parse_leaf(mymatch, substruct_dumped))
         pr = ParseResult(cp, span=m.span())
         return pr
@@ -325,7 +324,7 @@ class ParserElement(ParserElementType):
                 # recursive call
                 leaf.struct.map(preprocess_functor)
                 # after this everything is executed depth first (by recursion)
-                substructs_dumped[leaf.count] = cPickle.dumps(leaf.struct)
+                substructs_dumped[leaf.count] = cPickle.dumps(leaf.struct, -1)
                 del leaf.struct # delete the reference for dumping structure further up
                 # leaf is still a Repeated
 
