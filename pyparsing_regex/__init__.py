@@ -7,7 +7,6 @@ import abc
 from collections import namedtuple
 from overrides import overrides
 from functools import partial
-from wrapt import ObjectProxy
 
 from schlichtanders.myobjects import Count, Leaf, Structure
 import helpers_regex as hre
@@ -16,6 +15,7 @@ from pprint import pformat
 import cPickle
 
 def deepcopy(o):
+    """fast deepcopy alternative"""
     return cPickle.loads(cPickle.dumps(o, -1))
 
 # emulate generic methods from pyparsing itself:
@@ -26,18 +26,17 @@ _MAX_INT = sys.maxint
 # parser specific definitions
 # ===========================
 
-class ParserElementType(Structure):
+class ParserElementType(object):
     """ abstract class capturing the interface of an arbitrary ParserElement of pyparsing """
     __metaclass__ = abc.ABCMeta
         
     def __call__(self, name, **kwargs):
-        # TODO deepcopy needed?
         return deepcopy(self).setResultsName(name, **kwargs)
-    
+
+    @abc.abstractmethod
     def setResultsName(self, name, **kwargs):
         """ kwargs are for compatibility with pyparsing interface """
-        self.set_name(name)
-        return self # TODO is this the standard behaviour?
+        return self
 
     def setName(self, name):
         """ this is not yet implemented, so no easier output yet
@@ -113,7 +112,7 @@ class ParserElementType(Structure):
                 if overlap:
                     i += 1
                 else:
-                    i += m.end()
+                    i += m.parse_end
             else:
                 i += 1
 
@@ -129,11 +128,18 @@ class ParserElementType(Structure):
         """
         return list(self.scanString(instring))
     
-    # add, iadd already defined in Structure
-            
+    def __add__(self, other):
+        base = deepcopy(self)
+        base += other # (+=) == __iadd__
+        return base
+
+    @abc.abstractmethod
+    def __iadd__(self, other):
+        raise NotImplemented()
+
     def __or__(self, other):
         base = deepcopy(self)
-        base |= other # (|=) == __iadd__
+        base |= other # (|=) == __ior__
         return base
     
     @abc.abstractmethod
@@ -144,24 +150,6 @@ class ParserElementType(Structure):
         """not implemented in more detail"""
         return pformat(repr(self))
 
-        
-        
-class ParseResult(ObjectProxy):
-    """ pseudo class, capturing interface of return type of pyparsing (and more needed methods) """
-
-    def __init__(self, structure, span, flatten_singletons=None, empty_default="EMPTYLIST"):
-        # proxy the complete structure element:
-        super(ParseResult, self).__init__(structure)    
-        # general information over ParseResult:
-        self.span = span
-        
-    def end(self):
-        "returns match end for given string"
-        return self.span[1]
-    
-    def span(self):
-        "returns (match begin, match end) for given string"
-        return self.span
 
 #: small helper classes for substructuring:
 class Repeated(object):
@@ -175,6 +163,7 @@ class MatchedGroup(object):
         self.captures = captures
 
 
+# TODO probably not needed after refactoring:
 def recursive_structure_delift(struct):
     """ more complex delift for struct types, as the struct type itself is usually nested """
     struct.__class__ = Structure
@@ -200,30 +189,40 @@ class ParserElement(ParserElementType):
     def __init__(self, pattern, silent=False):
         if silent:
             # create empty Structure:
-            super(ParserElement, self).__init__(_list=[])
+            self.struct = Structure()
             self.pattern = pattern
+            self.name = self.pattern
         else:
             # create Count() Structure
-            super(ParserElement, self).__init__(initializer=Count())
+            self.struct = Structure(Count())
             self.pattern = hre.group(pattern)  # for every Count() there must be a group
+            self.name = self.pattern
         self._compiled = None
     
     # LOGIC
     # =====
-    
-    @overrides # TODO does this work - new parameter silent
+
     def group(self, wrapper=lambda x:x, pseudo=False, liftkeys=False, silent=None):
         # this is inplace:
-        super(ParserElement, self).group(wrapper, pseudo=pseudo, liftkeys=liftkeys)
+        self.struct.group(wrapper, pseudo=pseudo, liftkeys=liftkeys)
         # normal grouping is done by Structure type,
         # but silent groups are nevertheless needed for correct regex semantics:
         if silent is None:
             pass # keep old self.pattern, this is mainly needed for pseudo groups like created for ResultNames
         elif silent:
-            self.pattern = hre.silent_group(self.pattern)
+            self.pattern = hre.ensure_grouping(self.pattern)
         else:
             self.pattern = hre.group(self.pattern)
         self._compiled = None
+        return
+
+    def setResultsName(self, name, **kwargs):
+        """ kwargs are for compatibility with pyparsing interface """
+        self.struct.set_name(name)
+        return self
+
+    def setName(self, name):
+        self.name = name
         return self
     
     def suppress(self):
@@ -236,7 +235,7 @@ class ParserElement(ParserElementType):
         """
         self.pattern = hre.begins_not_silently_grouped.sub("(?:", self.pattern)
         self._compiled = None
-        self.clear()
+        self.struct.clear()
         return self
     
     def repeat(self, min=0, max=None):
@@ -256,8 +255,8 @@ class ParserElement(ParserElementType):
             # so that we can construct a map function which does all restructuring of the regex output
             self.group(
                 wrapper = lambda struct: Leaf(Repeated(Count(), struct)),
-                pseudo = True,
-                liftkeys = True,
+                pseudo = True, # pass everything through
+                liftkeys = True, # pass everything through
                 silent = False, # this adds a grouping level also in the pattern
             )
         if max is None:
@@ -267,40 +266,31 @@ class ParserElement(ParserElementType):
         else:
             self.pattern = r"%s{%s,%s}" % (self.pattern, min, max)
         self._compiled = None
-    
-    @staticmethod
-    def _transform_match_gen(match):
-        try:
-            for i in it.count(1):
-                yield MatchedGroup(match.ends(i), match.captures(i))
-        except IndexError:
-            pass
-    
+
+    def compile(self):
+        self._compiled = regex.compile(self.pattern)
+        return self._compiled
+
     def _parseString(self, instring):
         """starts matchin at starts of ``instring`` - no search
         
         this is copying everything beforehand"""
         
         if self._compiled is None:
-            self._compiled = regex.compile(self.pattern)
+            self.compile()
         
-        m = self._compiled.match(instring)
-        if m is None:
+        match = self._compiled.match(instring)
+        if match is None:
             return None
-        
 
         Count.reset()
-        cp = deepcopy(self)
-        # getting default structure str, repr interface (also for nested elements):
-        # (for speed advantage, this line can be commented
-        #  str / repr of ParserElement are adapted to Structure for this reason)
-        #recursive_structure_delift(cp))
+        struct = deepcopy(self.struct) # TODO this might get faster by using json serialization
 
-        mymatch, substruct_dumped, preprocess_functor = self._parse_preprocess(m)
-        cp.map(preprocess_functor)
-        cp.map(self._func_parse_leaf(mymatch, substruct_dumped))
-        pr = ParseResult(cp, span=m.span())
-        return pr
+        mymatch, substruct_dumped, preprocess_functor = self._parse_preprocess(match)
+        struct.map(preprocess_functor)
+        struct.map(self._func_parse_leaf(mymatch, substruct_dumped))
+        struct.parse_end = match.end()
+        return struct
 
     @staticmethod
     def _parse_preprocess(match):
@@ -318,24 +308,22 @@ class ParserElement(ParserElementType):
         def preprocess_functor(leaf):
             """ evaluates all Count instances so that they refer to fixed group """
             if isinstance(leaf, Repeated):
-                leaf.count = leaf.count.value # evaluates and stores value directly
+                new_leaf = leaf.count.value # evaluates and stores value directly
                 # CAUTION: +1 as we now start counting at 0
-                match_transformed.append(MatchedGroup(match.ends(leaf.count + 1)))
+                match_transformed.append(MatchedGroup(match.ends(new_leaf + 1)))
                 # recursive call
                 leaf.struct.map(preprocess_functor)
                 # after this everything is executed depth first (by recursion)
-                substructs_dumped[leaf.count] = cPickle.dumps(leaf.struct, -1)
-                del leaf.struct # delete the reference for dumping structure further up
-                # leaf is still a Repeated
+                substructs_dumped[new_leaf] = leaf.struct.dumps()
 
             # elif isinstance(leaf, Count):
             else: #there should be no other case
-                leaf = leaf.value # evaluates and stores value directly
+                new_leaf = leaf.value # evaluates and stores value directly
                 # CAUTION: +1 as we now start counting at 0
-                match_transformed.append(MatchedGroup(match.ends(leaf + 1), match.captures(leaf + 1)))
-                # leaf is int
+                match_transformed.append(MatchedGroup(match.ends(new_leaf + 1), match.captures(new_leaf + 1)))
+                # new_leaf is int
 
-            return leaf
+            return new_leaf
 
         return match_transformed, substructs_dumped, preprocess_functor
 
@@ -346,18 +334,17 @@ class ParserElement(ParserElementType):
         every Count instance must be evaluated and directly available (recursively!)
         i.e. first map ParserElement._recursive_evalcount
         """
-        
         def recursive_parse(leaf, maxend=None):
-            # recursive case:
-            if isinstance(leaf, Repeated):
+            try: # Repeated structure
+                dumped = substruct_dumped[leaf]
                 def gen():
-                    for i, end in enumerate(mymatch[leaf.count].ends):
+                    for i, end in enumerate(mymatch[leaf].ends):
                         if maxend is not None and end > maxend:
-                            del mymatch[leaf.count].ends[:i] #delete everything parsed so far
+                            del mymatch[leaf].ends[:i] #delete everything parsed so far
                             # captures are of no interest at all of these Repeated elements
                             break
                         # yield deepcopy(leaf.struct).map(partial(recursive_parse, maxend=end))
-                        yield cPickle.loads(substruct_dumped[leaf.count]).map(
+                        yield Structure.loads(dumped).map(
                             partial(recursive_parse, maxend=end)
                         )
             
@@ -368,10 +355,8 @@ class ParserElement(ParserElementType):
                 # (same effect as pseudo structure, however one could process this repetitions further,
                 # e.g. keeping only last repition like it is done in pyparsing for default)
                 return list(gen())
-            
-            # base case:
-            #elif isinstance(leaf, int): # value is stored directly
-            else:  # there should be no other case
+
+            except KeyError: # base case:
                 if maxend is None:
                     ret = mymatch[leaf].captures[:]
                     del mymatch[leaf].captures[:]
@@ -397,23 +382,30 @@ class ParserElement(ParserElementType):
     def __iadd__(self, other):
         if isinstance(other, basestring):
             other = ParserElement(regex.escape(other))
-        Structure.__iadd__(self, other)
+        self.struct += other.struct
         self.pattern += other.pattern
+        self.name += other.name
         self._compiled = None
         return self
     
     def __radd__(self, other):
         if isinstance(other, basestring):
             other = ParserElement(regex.escape(other))
-        other += self
+        other += self #__iadd__
         return other
         
     def __ior__(self, other):
+        # TODO I think there is some crucial error in this OR construction
+        # related to fact, that in regex an additional or gets an additional Count,
+        # however, such Counts getting empty because another branch was used, should
+        # usually not appear in the output, but just get ommitted
+        # - more booktracking needed
         if isinstance(other, basestring):
             other = ParserElement(regex.escape(other))
         
-        Structure.__iadd__(self, other)
+        self.struct += other.struct
         self.pattern += "|" + other.pattern
+        self.name += "|" + other.name
         self.group(pseudo = True,
                    liftkeys = True,
                    silent = True)
@@ -422,19 +414,14 @@ class ParserElement(ParserElementType):
     def __ror__(self, other):
         if isinstance(other, basestring):
             other = ParserElement(regex.escape(other))
-        other |= self
-        other.group(pseudo = True,
-                    liftkeys = True,
-                    silent = True)
+        other |= self  #__ior__
         return other
-    
-    """ # for speed just let it be the default output
+
     def __str__(self):
-        return "(r'%s', %s)" % (self.pattern, Structure.__str__(self))
+        return "('%s', %s)" % (self.name, str(self.struct))
     
     def __repr__(self):
-        return "(r'%s', %s)" % (self.pattern, Structure.__repr__(self))
-    """
+        return "('%s', %s, r'%s')" % (self.name, repr(self.struct), self.pattern)
 
 
 

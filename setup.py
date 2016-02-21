@@ -47,10 +47,9 @@ setup(
     license='closed source',
     packages=['pyparsing_regex'],
     zip_safe=False,
-    install_requires=["overrides>=0.5",
-                      "wrapt>=1.10.6",
-                      "regex>=2016.01.10",
-                      "pyparsing>=2.0.3"],
+    install_requires=["regex>=2016.01.10",
+                      "pyparsing>=2.0.3"
+                      "schlichtanders>=0.0.0"],
     # TODO add package schlichtanders
     cmdclass={'clean': CleanCmd}
     )
