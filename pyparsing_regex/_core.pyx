@@ -157,16 +157,6 @@ class Repeated(object):
         self.count = count
         self.struct = struct
 
-class MatchedGroup(object):
-    def __init__(self, ends, captures=None):
-        self.ends = ends
-        self.captures = captures
-
-    def __str__(self):
-        return "{ends: %s, captures: %s}" % (self.ends, self.captures)
-    def __repr__(self):
-        return str(self)
-
 
 class ParserElement(ParserElementType):
     """
@@ -236,13 +226,6 @@ class ParserElement(ParserElementType):
         """ repeat on arbitrary ParserElement """
         if max is not None and min > max:
             raise RuntimeError("min <= max needed")
-        elif min==max==1:
-            return #nothing to do
-        elif min==0 and max==1:
-            # make it optional (much faster, as there is no output reformating at all)
-            self.pattern = r"%s?" % hre.ensure_grouping(self.pattern)
-            self._compiled = None
-            return
 
         # if there is at most one real group in the pattern,
         # then there is no structure so far at all
@@ -257,12 +240,8 @@ class ParserElement(ParserElementType):
         except StopIteration:
             struct_len_1 = True
 
-        if (# singleton
-            len(hre.begins_not_silently_grouped.findall(self.pattern)) <= 1
-            # or nested repeatings Repeat(Repeat)
-            or (struct_len_1 and isinstance(firstelem, Repeated))):
-            # we still need to group silently so to not break anything
-            # (otherwise e.g. UNH...'{1, 99} appears, which instead of repeating the "group", just will repeat the last element)
+        if struct_len_1 and isinstance(firstelem, Repeated):
+            # prevent nested repeatings Repeat(Repeat)
             self.pattern = hre.ensure_grouping(self.pattern)
 
         else:
@@ -328,7 +307,7 @@ class ParserElement(ParserElementType):
             if isinstance(leaf, Repeated):
                 new_leaf = leaf.count.value # evaluates and stores value directly
                 # CAUTION: +1 as we now start counting at 0
-                match_transformed.append(MatchedGroup(match.ends(new_leaf + 1)))
+                match_transformed.append(match.ends(new_leaf + 1))
                 # recursive call
                 Structure._map(leaf.struct, preprocess_func)
                 # from here on everything is executed depth first (by recursion)
@@ -338,7 +317,7 @@ class ParserElement(ParserElementType):
             else: #there should be no other case
                 new_leaf = leaf.value # evaluates and stores value directly
                 # CAUTION: +1 as we now start counting at 0
-                match_transformed.append(MatchedGroup(match.ends(new_leaf + 1), match.captures(new_leaf + 1)))
+                match_transformed.append(match.captures(new_leaf + 1))
 
             return new_leaf # new_leaf is int
 
@@ -358,15 +337,15 @@ class ParserElement(ParserElementType):
                 # """
                 def gen():
                     if maxend is None:
-                        for end in mymatch[leaf].ends:
+                        for end in mymatch[leaf]: # repeated elements have ends while leafs have captures
                             yield Structure._map(
                                 serializer.loads(dumped),
                                 partial(recursive_parse, maxend=end)
                             )
                     else:
-                        for i, end in enumerate(mymatch[leaf].ends):
+                        for i, end in enumerate(mymatch[leaf]):
                             if end > maxend:
-                                del mymatch[leaf].ends[:i] #delete everything parsed so far
+                                del mymatch[leaf][:i] #delete everything parsed so far
                                 # captures are of no interest at all of these Repeated elements
                                 break
                             yield Structure._map(
@@ -382,52 +361,9 @@ class ParserElement(ParserElementType):
                 # e.g. keeping only last repition like it is done in pyparsing for default)
                 return list(gen())
 
-                # """ # not really faster...
-                # ret = []
-                # if maxend is None:
-                #     for end in mymatch[leaf].ends:
-                #         ret.append(
-                #             Structure._map(
-                #                 serializer.loads(dumped),
-                #                 partial(recursive_parse, maxend=end)
-                #             )
-                #         )
-                # else:
-                #     for i, end in enumerate(mymatch[leaf].ends):
-                #         if end > maxend:
-                #             del mymatch[leaf].ends[:i] #delete everything parsed so far
-                #             # captures are of no interest at all of these Repeated elements
-                #             break
-                #         ret.append(
-                #             Structure._map(
-                #                 serializer.loads(dumped),
-                #                 partial(recursive_parse, maxend=end)
-                #             )
-                #         )
-                # return ret
-                # """
-
             except KeyError: # base case:
-                if maxend is None:
-                    ret = mymatch[leaf].captures[:]
-                    del mymatch[leaf].captures[:]
-                    del mymatch[leaf].ends[:]
-                else:
-                    i = -1
-                    for i, end in enumerate(mymatch[leaf].ends):
-                        if end > maxend:
-                            # i is now the final valid index+1
-                            break
-                    else:
-                        # no break, i.e. we currently miss the last one, OR empty loop
-                        i += 1 # if nothing was done, i=0 now, giving empty list and no deletes
-
-                    ret = mymatch[leaf].captures[:i]
-                    # delete everything parsed so far (both captures end ends!):
-                    del mymatch[leaf].captures[:i]
-                    del mymatch[leaf].ends[:i]
-                return ret
-
+                # this is always a single entry
+                return mymatch[leaf].pop(0)
         return recursive_parse
 
     def __iadd__(self, other):
