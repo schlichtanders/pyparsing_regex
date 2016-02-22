@@ -49,7 +49,8 @@ setup(
     zip_safe=False,
     install_requires=["regex>=2016.01.10",
                       "pyparsing>=2.0.3"
-                      "schlichtanders>=0.0.0"],
+                      "schlichtanders>=0.0.0",
+                      "ujson>=1.35"],
     # TODO add package schlichtanders
     cmdclass={'clean': CleanCmd}
     )
