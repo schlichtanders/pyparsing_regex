@@ -8,7 +8,7 @@ from collections import namedtuple
 from overrides import overrides
 from functools import partial
 
-from schlichtanders.myobjects import Count, Leaf, Structure, FastStructure
+from schlichtanders.myobjects import Count, Leaf, Structure
 from schlichtanders.mygenerators import hist
 import helpers_regex as hre
 from pprint import pformat
@@ -171,16 +171,6 @@ class MatchedGroup(object):
     def __repr__(self):
         return str(self)
 
-# TODO probably not needed after refactoring:
-def recursive_structure_delift(struct):
-    """ more complex delift for struct types, as the struct type itself is usually nested """
-    struct.__class__ = Structure
-    for s in struct.iter_nopseudo(): # flattens out Leafs
-        if isinstance(s, Structure):
-            recursive_structure_delift(s)
-        elif isinstance(s, Repeated):
-            recursive_structure_delift(s.struct)
-
 
 class ParserElement(ParserElementType):
     """
@@ -197,12 +187,12 @@ class ParserElement(ParserElementType):
     def __init__(self, pattern, silent=False):
         if silent:
             # create empty Structure:
-            self.struct = FastStructure()
+            self.struct = Structure()
             self.pattern = pattern
             self.name = self.pattern
         else:
             # create Count() Structure
-            self.struct = FastStructure(Count())
+            self.struct = Structure(Count())
             self.pattern = hre.group(pattern)  # for every Count() there must be a group
             self.name = self.pattern
         self._compiled = None
@@ -266,8 +256,7 @@ class ParserElement(ParserElementType):
             # the grouping is done by wrapping into a Leaf,
             # so that we can construct a map function which does all restructuring of the regex output
             self.group(
-                # wrapper = lambda struct: Leaf(Repeated(Count(), struct)), #Structure version
-                wrapper = lambda struct: Repeated(Count(), struct), #FastStructure version
+                wrapper = lambda struct: Repeated(Count(), struct),
                 pseudo = True, # pass everything through
                 liftkeys = True, # pass everything through
                 silent = False, # this adds a grouping level also in the pattern
@@ -327,8 +316,7 @@ class ParserElement(ParserElementType):
                 # CAUTION: +1 as we now start counting at 0
                 match_transformed.append(MatchedGroup(match.ends(new_leaf + 1)))
                 # recursive call
-                # leaf.struct.map(preprocess_func) # Structure version
-                FastStructure._map(leaf.struct, preprocess_func) # FastStructure version
+                Structure._map(leaf.struct, preprocess_func)
                 # from here on everything is executed depth first (by recursion)
                 substructs_dumped[new_leaf] = serializer.dumps(leaf.struct)
 
@@ -355,7 +343,7 @@ class ParserElement(ParserElementType):
                 def gen():
                     if maxend is None:
                         for end in mymatch[leaf].ends:
-                            yield FastStructure._map(  # FastStructure version, works directly with dicts
+                            yield Structure._map(
                             serializer.loads(dumped),
                             partial(recursive_parse, maxend=end)
                         )
@@ -365,9 +353,7 @@ class ParserElement(ParserElementType):
                                 del mymatch[leaf].ends[:i] #delete everything parsed so far
                                 # captures are of no interest at all of these Repeated elements
                                 break
-                            # yield deepcopy(leaf.struct).map(partial(recursive_parse, maxend=end)) # naive version
-                            # yield serializer.loads(dumped).map(partial(recursive_parse, maxend=end)) # Structure version
-                            yield FastStructure._map(  # FastStructure version, works directly with dicts
+                            yield Structure._map(
                                 serializer.loads(dumped),
                                 partial(recursive_parse, maxend=end)
                             )
