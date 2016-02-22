@@ -50,7 +50,8 @@ setup(
     install_requires=["regex>=2016.01.10",
                       "pyparsing>=2.0.3"
                       "schlichtanders>=0.0.0",
-                      "ujson>=1.35"],
+                      "ujson>=1.35",       # CAUTION: this are both not pypy compatible
+                      "cython>=0.23.4"],   # CAUTION: this are both not pypy compatible
     # TODO add package schlichtanders
     cmdclass={'clean': CleanCmd}
     )
