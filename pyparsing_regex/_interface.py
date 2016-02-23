@@ -8,7 +8,6 @@ import regex
 import __builtin__
 from copy import copy
 from schlichtanders.myobjects_cython import Structure
-
 import cPickle
 
 def deepcopy(o):

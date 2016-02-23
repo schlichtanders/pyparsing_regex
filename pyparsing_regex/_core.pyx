@@ -8,7 +8,6 @@ import abc
 from functools import partial
 
 from schlichtanders.myobjects_cython import Count, Structure
-# from schlichtanders.myobjects import Count, Structure
 import pyparsing_regex._helpers_regex as hre
 from pprint import pformat
 
