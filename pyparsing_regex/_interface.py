@@ -1,12 +1,15 @@
 # Pyparsing-like Interface
 # ========================
 import pyximport; pyximport.install()
-from pyparsing_regex._core import ParserElement
+# from pyparsing_regex._core import ParserElement
+from pyparsing_regex._core_fast import ParserElement
+
 import pyparsing_regex._helpers_regex as hre
 import regex
 import __builtin__
 from copy import copy
-from schlichtanders.myobjects_cython import Structure
+# from schlichtanders.myobjects_cython import Structure
+from schlichtanders.myobjects import Structure
 
 import cPickle
 
@@ -140,6 +143,7 @@ def And(iterable):
     try:
         gen = iter(iterable)
         first = next(gen)
+        first.__class__ = ParserElement
         base = first + next(gen) # once (+) to have a new element
         for expr in gen:
             base += expr  # in place addition to avoid copying
@@ -152,12 +156,14 @@ def MatchFirst(iterable):
     """__dict__ of first element will be passed through MatchFirst result """
     try:
         gen = iter(iterable)
-        base = next(gen) | next(gen) # once (|) to have a new element
+        first = next(gen)
+        first.__class__ = ParserElement
+        base = first | next(gen) # once (|) to have a new element
         for expr in gen:
             base |= expr  # in place or to avoid copying
         return base
     except StopIteration:  # only one element
-        return next(iter(iterable))
+        return first
 
 #Or __xor__ and Each __and__ are missing - takes more time to implement
 
@@ -165,16 +171,19 @@ def Optional(expr, default=None):
     if default is not None:
         Structure.EMPTY_DEFAULT = default
     cp = copy(expr)
+    cp.__class__ = ParserElement
     cp.pattern = r"%s?" % hre.ensure_grouping(cp.pattern)
     return cp
 
 def Group(expr):
     g = deepcopy(expr)
+    g.__class__ = ParserElement
     g.group(silent=True)
     return g
 
 def GroupLiftKeys(expr):
     g = deepcopy(expr)
+    g.__class__ = ParserElement
     g.group(silent=True, liftkeys=True)
     return g
 
@@ -186,6 +195,7 @@ def ZeroOrMore(expr):
 
 def Repeat(expr, min=0, max=None):
     expr = deepcopy(expr)
+    expr.__class__ = ParserElement
     expr.repeat(min=min, max=max)
     return expr
 
