@@ -7,14 +7,14 @@ import sys
 import abc
 from functools import partial
 
-from schlichtanders.myobjects_cython import Count, Structure
+from schlichtanders.myobjects_cython import Count, create_counter, Structure
+#from schlichtanders.myobjects import Count, create_counter, Structure
 import pyparsing_regex._helpers_regex as hre
 from pprint import pformat
 
 import cPickle
-import ujson
 
-serializer = ujson
+# Count = create_counter("Count") # this is unfortunately yet not pickable with pyximport
 
 def deepcopy(o):
     """fast deepcopy alternative"""
@@ -314,7 +314,6 @@ class ParserElement(ParserElementType):
                 # recursive call
                 leaf.structure.map(preprocess_func)
                 # from here on everything is executed depth first (by recursion)
-                # substructs_dumped[new_leaf] = serializer.dumps(leaf.structure)
                 substructs[new_leaf] = leaf.structure
 
             # elif isinstance(leaf, Count):
