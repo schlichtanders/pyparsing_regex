@@ -1,15 +1,13 @@
 # Pyparsing-like Interface
 # ========================
 import pyximport; pyximport.install()
-# from pyparsing_regex._core import ParserElement
-from pyparsing_regex._core_fast import ParserElement
+from pyparsing_regex._core import ParserElement
 
 import pyparsing_regex._helpers_regex as hre
 import regex
 import __builtin__
 from copy import copy
-# from schlichtanders.myobjects_cython import Structure
-from schlichtanders.myobjects import Structure
+from schlichtanders.myobjects_cython import Structure
 
 import cPickle
 
