@@ -1,13 +1,16 @@
 # Pyparsing-like Interface
 # ========================
-import pyximport; pyximport.install()
-from pyparsing_regex._core import ParserElement
+try:
+    import pyximport; pyximport.install()
+    from pyparsing_regex._core2 import ParserElement, Structure
+except ImportError:
+    from pyparsing_regex._core import ParserElement, Structure
 
 import pyparsing_regex._helpers_regex as hre
 import regex
 import __builtin__
 from copy import copy
-from schlichtanders.myobjects_cython import Structure
+
 import cPickle
 
 def deepcopy(o):

@@ -7,8 +7,9 @@ import shutil
 from setuptools import setup
 from distutils.command.clean import clean as Clean
 
-# TODO profile with new profiler
-# TODO compare performance with Fabians old version
+# for compatibility with easy setup.py and pip install, we choose to use pyximport
+# and hence do not compile cython extensions by setup.py:
+# from Cython.Build import cythonize
 
 
 class CleanCmd(Clean):
@@ -39,19 +40,24 @@ class CleanCmd(Clean):
                     shutil.rmtree(os.path.join(dirpath, dirname))
 
 setup(
-    name='pyparsing-regex',
-    version='0.1',
+    name='pyparsing_regex',
+    version='0.1.0',
     description='Python regular expression interface like pyparsing',
     author=__author__,
     author_email='Stephan.Sahm@gmx.de',
     license='closed source',
     packages=['pyparsing_regex'],
     zip_safe=False,
+    # ext_modules = cythonize("pyparsing_regex/_core_cython.pyx"),
     install_requires=["regex>=2016.01.10",
-                      "pyparsing>=2.0.3"
-                      "schlichtanders>=0.0.0",
-                      "ujson>=1.35",       # CAUTION: this are both not pypy compatible
-                      "cython>=0.23.4"],   # CAUTION: this are both not pypy compatible
-    # TODO add package schlichtanders
+                      "pyparsing>=2.0.3",
+                      "schlichtanders>=0.1.0"],
+    extra_require={
+        "PyPy" : [],
+        "CPython" : [ "schlichtanders[CPython]>=0.1.0",  # "schlichtanders @ git+https://github.com/schlichtanders/schlichtanders.git", # this is the future, however not yet implemented in setuptools
+                      "cython>=0.23.4"],
+    },
+    # This is the present, use "pip install --process-dependency-links -e ."
+    dependency_links = ["git+https://github.com/schlichtanders/schlichtanders.git#egg=schlichtanders-0.1.0"],
     cmdclass={'clean': CleanCmd}
-    )
+)

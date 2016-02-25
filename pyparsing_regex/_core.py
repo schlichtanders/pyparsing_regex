@@ -1,18 +1,17 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-import pyximport; pyximport.install()
 import regex
 import sys
 import abc
 from functools import partial
 
-from schlichtanders.myobjects_cython import Count, create_counter, Structure
-#from schlichtanders.myobjects import Count, create_counter, Structure
+from schlichtanders.myobjects import Count, create_counter, Structure
 import pyparsing_regex._helpers_regex as hre
 from pprint import pformat
 
 import cPickle
+Count = create_counter() # does not work under cython
 
 # Count = create_counter("Count") # this is unfortunately yet not pickable with pyximport
 
