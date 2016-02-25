@@ -51,11 +51,10 @@ setup(
     # ext_modules = cythonize("pyparsing_regex/_core_cython.pyx"),
     install_requires=["regex>=2016.01.10",
                       "pyparsing>=2.0.3",
-                      "schlichtanders>=0.1.0"],
-    extra_require={
-        "PyPy" : [],
-        "CPython" : [ "schlichtanders[CPython]>=0.1.0",  # "schlichtanders @ git+https://github.com/schlichtanders/schlichtanders.git", # this is the future, however not yet implemented in setuptools
-                      "cython>=0.23.4"],
+                      "schlichtanders>=0.1.0"], # "schlichtanders @ git+https://github.com/schlichtanders/schlichtanders.git", # this is the future, however not yet implemented in setuptools
+    extras_require={
+        "pypy" : [],
+        "cpython" : [ "cython>=0.23.4"],
     },
     # This is the present, use "pip install --process-dependency-links -e ."
     dependency_links = ["git+https://github.com/schlichtanders/schlichtanders.git#egg=schlichtanders-0.1.0"],
