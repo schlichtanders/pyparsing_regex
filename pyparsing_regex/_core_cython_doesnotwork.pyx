@@ -1,12 +1,17 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
+# distutils: language = c++
 
+import pyximport; pyximport.install()
 import regex
 import sys
 import abc
 from functools import partial
 
+# cython:
+from libcpp.vector cimport vector
+from libcpp.string cimport string
+
 from schlichtanders.myobjects_cython import Count, create_counter, Structure
+#from schlichtanders.myobjects import Count, create_counter, Structure
 import pyparsing_regex._helpers_regex as hre
 from pprint import pformat
 
@@ -284,9 +289,9 @@ class ParserElement(ParserElementType):
         Count.reset()
         struct = deepcopy(self.structure)
 
-        mymatch, substructs, preprocess_func = self._parse_preprocess(match)
+        match_ends, match_captures, substructs, preprocess_func = self._parse_preprocess(match)
         struct.map(preprocess_func)
-        struct.map(self._func_parse_leaf(mymatch, substructs))
+        struct.map(self._func_parse_leaf(match_ends, match_captures, substructs))
         struct.parse_end = match.end()
         return struct
 
@@ -301,14 +306,17 @@ class ParserElement(ParserElementType):
         :param match: to be transformed
         :return: match_transformed, evalcount_func
         """
-        match_transformed = []
-        substructs = {} #{Count: substruct}
+        cdef vector[vector[int]] match_ends = []
+        cdef vector[vector[string]] match_captures = []
+        cdef dict substructs = {}#{Count: substruct}
+        cdef int new_leaf = 0
         def preprocess_func(leaf):
             """ evaluates all Count instances so that they refer to fixed group """
             if isinstance(leaf, Repeated):
                 new_leaf = leaf.count.value # evaluates and stores value directly # TODO this is already somewhat in structure... we could ask for the idx, which would be the same, wouldn't it?
                 # CAUTION: +1 as we now start counting at 0
-                match_transformed.append(match.ends(new_leaf + 1))
+                match_ends.push_back(<vector[int]> match.ends(new_leaf + 1)[::-1])
+                match_captures.push_back(<vector[string]> [])
                 # recursive call
                 leaf.structure.map(preprocess_func)
                 # from here on everything is executed depth first (by recursion)
@@ -318,35 +326,50 @@ class ParserElement(ParserElementType):
             else: #there should be no other case
                 new_leaf = leaf.value # evaluates and stores value directly
                 # CAUTION: +1 as we now start counting at 0
-                match_transformed.append(match.captures(new_leaf + 1))
+                match_captures.push_back(<vector[string]> match.captures(new_leaf + 1)[::-1])
+                match_ends.push_back(<vector[int]>[])
 
             return new_leaf # new_leaf is int
 
-        return match_transformed, substructs, preprocess_func
-
+        return match_ends, match_captures, substructs, preprocess_func
 
     @staticmethod
-    def _func_parse_leaf(mymatch, substructs):
+    def _func_parse_leaf(vector[vector[int]] match_ends, vector[vector[string]] match_captures, substructs):
         """
         CAUTION: for this map to work correctly,
         every Count instance must be evaluated and directly available (recursively!)
         i.e. first map ParserElement._recursive_evalcount
         """
-        def recursive_parse(leaf, maxend=None):
+        def recursive_parse(int leaf, int maxend=-1):
+            cdef list ret_repeat = []
+            cdef int iend = 0
+            cdef int nend = 0
+            cdef string ret_base
+
             try: # Repeated structure
                 substruct = substructs[leaf]
+                nend = match_ends[leaf].size()
                 # """
-                def gen():
-                    if maxend is None:
-                        for end in mymatch[leaf]: # repeated elements have ends while leafs have captures
-                            yield substruct.map(partial(recursive_parse, maxend=end), inplace=False)
-                    else:
-                        for i, end in enumerate(mymatch[leaf]):
-                            if end > maxend:
-                                del mymatch[leaf][:i] #delete everything parsed so far
-                                # captures are of no interest at all of these Repeated elements
-                                break
-                            yield substruct.map(partial(recursive_parse, maxend=end), inplace=False)
+                if maxend == -1:
+                    for iend from nend > iend >= 0:
+                        ret_repeat.append(
+                            substruct.map(
+                                lambda _leaf: recursive_parse(_leaf, match_ends[leaf][iend]),
+                                inplace=False
+                            )
+                        )
+                else:
+
+                    for iend from nend > iend >= 0:
+                        if match_ends[leaf][iend] > maxend:
+                            match_ends[leaf].resize(nend - iend);
+                            break
+                        ret_repeat.append(
+                            substruct.map(
+                                lambda _leaf: recursive_parse(_leaf, match_ends[leaf][iend]),
+                                inplace=False
+                            )
+                        )
 
                 # returns structure which is labeld pseudo by initial repeat method
                 # return reduce(op.add, gen())
@@ -354,11 +377,13 @@ class ParserElement(ParserElementType):
                 # alternatively return simple list, which is flattened out automatically
                 # (same effect as pseudo structure, however one could process this repetitions further,
                 # e.g. keeping only last repition like it is done in pyparsing for default)
-                return list(gen())
+                return ret_repeat
 
             except KeyError: # base case:
                 # this is always a single entry
-                return mymatch[leaf].pop(0)
+                ret_base = match_captures[leaf].back()
+                match_captures[leaf].pop_back()
+                return ret_base
         return recursive_parse
 
     def __iadd__(self, other):

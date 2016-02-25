@@ -12,7 +12,7 @@ the regex-pattern can just be asked for and matched individually.
 Install
 =======
 
-Use pip with additioanl dependencies support.
+Use pip with additioanl dependencies support
 
     pip install --process-dependency-links "git+https://github.com/schlichtanders/pyparsing_regex.git#egg=pyparsing_regex"
 
@@ -22,8 +22,12 @@ To install CPython dependencies (not runnable within PyPy) use
 
 For a local development install, first clone the git repository, and then e.g. for the CPython version:
 
-    pip install --process-dependency-links -e "file:///user/filetogitclone/pyparsing_regex#egg=pyparsing_regex[CPython]"
+    pip install --process-dependency-links -e "file:///pathtogitclone/pyparsing_regex#egg=pyparsing_regex[CPython]"
 
+
+[ The ``--process-dependency-links`` flag is needed because current setuptools unfortunately do not support
+direct requirements syntax as specified in PEP 440. If this feature will be supported, ``dependency_links``
+might probably be dropped altogether ]
 
 Features
 ========

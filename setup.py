@@ -56,6 +56,10 @@ setup(
         "pypy" : [],
         "cpython" : [ "cython>=0.23.4"],
     },
+    # include_package_data=True,  # should work, but doesn't, I think pip does not recognize git automatically
+    package_data = {
+        'pyparsing_regex': ['*.pyx', '*pyxbld'], #include cython files
+    },
     # This is the present, use "pip install --process-dependency-links -e ."
     dependency_links = ["git+https://github.com/schlichtanders/schlichtanders.git#egg=schlichtanders-0.1.0"],
     cmdclass={'clean': CleanCmd}
