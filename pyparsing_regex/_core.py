@@ -307,7 +307,7 @@ class ParserElement(ParserElementType):
         def preprocess_func(leaf):
             """ evaluates all Count instances so that they refer to fixed group """
             if isinstance(leaf, Repeated):
-                new_leaf = leaf.count.value # evaluates and stores value directly # TODO this is already somewhat in structure... we could ask for the idx, which would be the same, wouldn't it?
+                new_leaf = leaf.count.value # evaluates and stores value directly
                 # CAUTION: +1 as we now start counting at 0
                 match_transformed.append(match.ends(new_leaf + 1))
                 # recursive call
@@ -383,6 +383,12 @@ class ParserElement(ParserElementType):
         # however, such Counts getting empty because another branch was used, should
         # usually not appear in the output, but just get ommitted
         # - more booktracking needed
+
+        # TODO e.g. Delim.join_optional does not seem to work with pyparsing_regex
+        # as the OR construction builds new Count(). There is something for this,
+        # namely OR-construction with same group-number,
+        # however one would have to indicate this here, which is not done in general
+        # it seems to be implementation detail for pyparsing-regex unfortunately...
         if isinstance(other, basestring):
             other = ParserElement(regex.escape(other))
 

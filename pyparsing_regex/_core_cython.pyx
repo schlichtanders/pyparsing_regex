@@ -306,7 +306,7 @@ class ParserElement(ParserElementType):
         def preprocess_func(leaf):
             """ evaluates all Count instances so that they refer to fixed group """
             if isinstance(leaf, Repeated):
-                new_leaf = leaf.count.value # evaluates and stores value directly # TODO this is already somewhat in structure... we could ask for the idx, which would be the same, wouldn't it?
+                new_leaf = leaf.count.value # evaluates and stores value directly
                 # CAUTION: +1 as we now start counting at 0
                 match_transformed.append(match.ends(new_leaf + 1))
                 # recursive call

@@ -2,7 +2,7 @@
 import regex
 from itertools import izip
 
-begins_suppressed = regex.compile(r"\(\?:") #TODO rename to begins_silently_grouped ?
+begins_silently_grouped = regex.compile(r"\(\?:")
 begins_named = regex.compile(r"\(\?P<([^>]*)>")
 #begins_named2 = regex.compile(r"\(\?<([^>]*)>")
 begins_grouped = regex.compile(r"\(")
