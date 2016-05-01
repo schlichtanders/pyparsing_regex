@@ -49,7 +49,7 @@ setup(
     packages=['pyparsing_regex'],
     zip_safe=False,
     # ext_modules = cythonize("pyparsing_regex/_core_cython.pyx"),
-    install_requires=["regex>=2016.01.10",
+    install_requires=["regex>=2016.1.10",
                       "pyparsing>=2.0.3",
                       "schlichtanders>=0.1.0"], # "schlichtanders @ git+https://github.com/schlichtanders/schlichtanders.git", # this is the future, however not yet implemented in setuptools
     extras_require={

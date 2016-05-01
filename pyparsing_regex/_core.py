@@ -168,6 +168,7 @@ class ParserElement(ParserElementType):
     not implemented: whitespaces support
     """
 
+    EMPTY = None
 
     # CONSTRUCTION
     # ============
@@ -295,12 +296,12 @@ class ParserElement(ParserElementType):
     def _parse_preprocess(match):
         """ evals Counts, transforms match, and dumps structures for repititions
 
-        attention! returns function as second, and match_transformed as first argument,
-        however this match_transformed is still empty initially and will be set by running the
+        attention! match_transformed as first argument, substructs as third and function as last
+        however match_transformed (substructs) are still empty initially and will be set by running the
         function
 
         :param match: to be transformed
-        :return: match_transformed, evalcount_func
+        :return: match_transformed, substructs, preprocess_func
         """
         match_transformed = []
         substructs = {} #{Count: substruct}
@@ -308,7 +309,7 @@ class ParserElement(ParserElementType):
             """ evaluates all Count instances so that they refer to fixed group """
             if isinstance(leaf, Repeated):
                 new_leaf = leaf.count.value # evaluates and stores value directly
-                # CAUTION: +1 as we now start counting at 0
+                # CAUTION: +1 as we now start counting at 0, but regex start counting at 1 for groups
                 match_transformed.append(match.ends(new_leaf + 1))
                 # recursive call
                 leaf.structure.map(preprocess_func)
@@ -318,8 +319,8 @@ class ParserElement(ParserElementType):
             # elif isinstance(leaf, Count):
             else: #there should be no other case
                 new_leaf = leaf.value # evaluates and stores value directly
-                # CAUTION: +1 as we now start counting at 0
-                match_transformed.append(match.captures(new_leaf + 1))
+                # CAUTION: +1 as we now start counting at 0, but regex start counting at 1 for groups
+                match_transformed.append((match.ends(new_leaf + 1), match.captures(new_leaf + 1)))
 
             return new_leaf # new_leaf is int
 
@@ -345,21 +346,25 @@ class ParserElement(ParserElementType):
                         for i, end in enumerate(mymatch[leaf]):
                             if end > maxend:
                                 del mymatch[leaf][:i] #delete everything parsed so far
-                                # captures are of no interest at all of these Repeated elements
                                 break
                             yield substruct.map(partial(recursive_parse, maxend=end), inplace=False)
 
-                # returns structure which is labeld pseudo by initial repeat method
-                # return reduce(op.add, gen())
-
-                # alternatively return simple list, which is flattened out automatically
+                # return simple list, which is flattened out automatically
                 # (same effect as pseudo structure, however one could process this repetitions further,
                 # e.g. keeping only last repition like it is done in pyparsing for default)
                 return list(gen())
 
             except KeyError: # base case:
                 # this is always a single entry
-                return mymatch[leaf].pop(0)
+                # we have to check ends as optional fields might get skipped and do not appear at all in ends/captures
+                ends, captures = mymatch[leaf]
+                if not ends:  # nothing matched at all on this entry
+                    return ParserElement.EMPTY
+                elif ends[0] <= maxend or maxend is None:  # some matches within subrange
+                    del ends[0]
+                    return captures.pop(0)
+                else: # matches, but not within this current subrange
+                    return ParserElement.EMPTY
         return recursive_parse
 
     def __iadd__(self, other):
