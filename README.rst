@@ -8,6 +8,10 @@ The crucial advantage: it is faster.
 Further it uses regex at the ground, so that for maximal speed, with no fancy output-support needed,
 the regex-pattern can just be asked for and matched individually.
 
+Docs
+====
+
+For further documentation see http://pyparsing-regex.readthedocs.io/en/latest/pyparsing_regex.html
 
 Install
 =======
