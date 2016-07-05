@@ -13,10 +13,12 @@ In addition to pyparsing, pyparsing_regex has a ``GroupLiftKeys`` class which wo
 are also available at the upper level (encompassing everything which belongs to that key further down). In a normal
 ``Group``, the nested keys would be hided from the upper layer, which might not be what is wanted.
 
-The returned object is a ``schlichtanders.myobjects.Structure`` which is a general powerful datastructure immitating
+The returned object is a ``schlichtanders.myobjects.Structure`` which is a general powerful datastructure imitating
 pyparsings ParseResult in a general way.
 
 For further documentation, see also  http://pyparsing.wikispaces.com/
+
+This lives on github https://github.com/schlichtanders/pyparsing_regex
 """
 from ._interface import *
 __all__ = [
