@@ -15,10 +15,11 @@ are also available at the upper level (encompassing everything which belongs to 
 
 The returned object is a ``schlichtanders.myobjects.Structure`` which is a general powerful datastructure immitating
 pyparsings ParseResult in a general way.
+
+For further documentation, see also  http://pyparsing.wikispaces.com/
 """
 from ._interface import *
 __all__ = [
-    'deepcopy',
     'Literal', 'Regex', 'Word', 'CharsNotIn', 'SkipTo', 'FollowedBy',
     'Combine', 'Suppress', 'StringStart', 'StringEnd', 'LineStart', 'LineEnd',
     'And', 'MatchFirst', 'Optional', 'Group', 'GroupLiftKeys', 'OneOrMore', 'ZeroOrMore',
