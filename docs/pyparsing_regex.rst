@@ -5,4 +5,3 @@ pyparsing_regex package
     :members:
     :undoc-members:
     :show-inheritance:
-
