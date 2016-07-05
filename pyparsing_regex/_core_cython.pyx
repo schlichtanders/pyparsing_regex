@@ -174,6 +174,15 @@ class ParserElement(ParserElementType):
     # ============
 
     def __init__(self, pattern, silent=False):
+        """
+
+        Parameters
+        ----------
+        pattern : str
+            regular expression pattern which shall be matched by this entitity
+        silent : bool
+            indicating, whether this pattern shall be listed in the Structure output format
+        """
         if silent:
             # create empty Structure:
             self.structure = Structure()
@@ -209,6 +218,7 @@ class ParserElement(ParserElementType):
         return self
 
     def setName(self, name):
+        """ set name of this ParserElement """
         self.name = name
         return self
 
